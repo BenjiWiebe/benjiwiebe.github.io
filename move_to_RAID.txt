@@ -61,6 +61,9 @@ Now within the chroot:
 	Add our new RAID array to mdadm.conf. This isn't strictly necessary, but will keep our RAID at /dev/md0 instead of autonumbering.
 	$ mdadm --detail --scan >>/etc/mdadm.conf
 
+	If your /etc/fstab does NOT use UUIDs, or if you are updating the layout of your disks, update fstab to reflect the changes.
+	$ vi /etc/fstab
+
 	Install GRUB to the MBR. Use the disk devices, not the partition devices.
 	If you are installing to a degraded array (half of a RAID1, for instance) you'll get errors from grub2-install about physical device (null). You can ignore them.
 	It might seem to hang. Wait it out, it'll finish.
