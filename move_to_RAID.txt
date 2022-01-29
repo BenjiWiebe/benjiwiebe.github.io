@@ -1,0 +1,89 @@
+This guide was tested with Fedora 35, using its default partition layout.
+This guide is for MBR/legacy boot systems. I don't think this level of elegance is possible with UEFI (FAT32 EFI partitions wouldn't be on the RAID), but correct me if I'm wrong.
+
+sda is the old/current drive, sdb and sdc are the new drives which we will be setting up as a RAID1 array.
+sda1 is /boot, and /dev/oldvg/oldroot is the root filesystem (LVM).
+If you want, you can add drives later and set everything up as a degraded array. Substitute 'missing' for one of the partitions in the mdadm --create command.
+
+Make sure you have mdadm already installed. If you don't, you won't get past the initramfs part of booting after moving everything over to the RAID.
+Shutdown computer.
+Plug in new drives.
+Boot into GParted LiveCD or something similar.
+Create partition tables on new drives.
+Add one unformatted partition covering the whole drive on each drive, unless your drives are not the same size. Then make each partition the size of the smaller drive.
+Make sure the new partitions are marked as bootable. FIXME Is this needed? I skipped it in the VM and it worked fine.
+
+Create our RAID on the new drives. GRUB2 understands both RAID and LVM, so nothing funny needed for /boot! In fact, you don't have to use a separate /boot LV!
+GRUB2 understands md/v1.x metadata, so answer yes to the prompts about metadata version with regards to booting.
+Optional: Specifying homehost and name aren't necessary. Also, a bitmap isn't needed, but you probably want one.
+$ mdadm --create /dev/md0 --homehost myhostname --name my_raid --level 1 --raid-devices 2 --bitmap internal /dev/sdb1 /dev/sdc1
+
+Create the PV and then VG on the RAID.
+$ pvcreate /dev/md0
+$ vgcreate vg_main /dev/md0
+
+Create the LV that will be for /boot and / (root filesystem), or whatever LV layout you desire. If changing the layout, update /etc/fstab later in the 'chroot' section of this guide.
+Use the size from the old drive or larger so the data fits. 'partclone' won't shrink partitions for you!
+If you *are* moving to smaller disks, you can use GParted to shrink the old partitions first.
+$ lvcreate -L 1G -n boot vg_main
+$ lvcreate -L 10G -n root vg_main
+
+Optional: Create any other LVs you want (for /var and /home, maybe?).
+$ lvcreate -L size -n name vg_main
+
+Copy data to new boot partition and new root partition. This is superior to dd, as partclone understands the filesystems and won't copy unused space. Use the partclone command that matches your filesystem type if not using ext4, such as partclone.xfs for XFS.
+$ partclone.ext4 --source /dev/sda1 --dev-to-dev --output /dev/vg_main/boot
+$ partclone.ext4 --source /dev/oldvg/oldroot --dev-to-dev --output /dev/vg_main/root
+
+If any partitions on the new drive are larger at this point than the old ones, run resize2fs on them to extend the FS to the size of the partition.
+If you aren't sure, just run the resize2fs commands anyways. It won't hurt anything. Note: If not using ext2/3/4, use the appropriate tool to resize your filesystem.
+$ resize2fs /dev/vg_main/boot
+$ resize2fs /dev/vg_main/root
+
+grub-install lets you specify modules? we might need raid1x and lvm then. - doesn't look like it!
+Also what about rerunning grub2-mkconfig after regenerating the initramfs? That looks like it might be needed.
+Do we need to sfdisk copy the partition table from one drive to another? Why? Partition flags?!
+We need to install GRUB and regenerate its configuration now, and to do so we need to chroot into our normal OS.
+$ mount /dev/vg_main/root /mnt
+$ mount /dev/vg_main/boot /mnt/boot
+$ for i in dev dev/pts proc sys run; do mount -B /$i /mnt/$i; done
+$ chroot /mnt
+
+Now within the chroot:
+
+	Update GRUB_CMDLINE_LINUX in /etc/default/grub. Change rd.lvm.lv= to point to your new vggroup/rootlv, and add rd.md.uuid=<uuid>.
+	The rd.md uuid comes from 'mdadm --detail --scan'. If you don't have mdadm in the chroot, open up another terminal and run it from the LiveCD environment.
+	These changes tell Linux which LVM/RAID devices to activate during boot.
+	Optional: Use rd.auto=1 instead of rd.md.uuid and rd.lvm.lv. This will activate all LVM/RAID/LUKS devices, so presumably could slow down the boot a bit if you have lots.
+	Optional: Add rd.retry=30 if you want the boot environment to fail a drive from the array more quickly. This would be nice if a power failure kills a drive. Not doing this means it will take 180 seconds (Fedora 35) before it kicks out the failed drive and boots with the now-degraded array.
+	$ vi /etc/default/grub
+
+	Add our new RAID array to mdadm.conf. This isn't strictly necessary, but will keep our RAID at /dev/md0 instead of autonumbering.
+	$ mdadm --detail --scan >>/etc/mdadm.conf
+
+	Install GRUB to the MBR. Use the disk devices, not the partition devices.
+	If you are installing to a degraded array (half of a RAID1, for instance) you'll get errors from grub2-install about physical device (null). You can ignore them.
+	It might seem to hang. Wait it out, it'll finish.
+	$ grub2-install /dev/sdb
+	$ grub2-install /dev/sdc
+	$ grub2-mkconfig -o /boot/grub2/grub.cfg FIXME: We need to remove the old drive from the boot entries somehow, right?
+
+	Regenerate the initramfs.
+	$ dracut --regenerate-all --force
+
+	Exit the chroot
+	$ exit
+
+
+Shutdown computer.
+Remove old drive.
+Boot computer. At this point it's a good idea to check that your second HDD is the second option in the boot priority so BIOS knows which drive to fall back to, as well.
+Also, if for some reason GRUB tries to boot into the old drive you just removed, manually select the correct entry to boot into from the list.
+You should also regenerate the GRUB configuration now to permanently remove the old boot entry.
+$ grub2-mkconfig -o /boot/grub2/grub.cfg
+
+Profit.
+
+
+Any things you'd like to see added or changed in this guide? Please let me know!
+I can be reached at benjiwiebe14 at the Google email service.
