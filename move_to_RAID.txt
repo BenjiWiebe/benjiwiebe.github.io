@@ -66,7 +66,9 @@ Now within the chroot:
 	It might seem to hang. Wait it out, it'll finish.
 	$ grub2-install /dev/sdb
 	$ grub2-install /dev/sdc
-	$ grub2-mkconfig -o /boot/grub2/grub.cfg FIXME: We need to remove the old drive from the boot entries somehow, right?
+
+	Regenerate the GRUB configuration. Note this will include the old drive too. We will regenerate the configuration again once the old drive has been removed.
+	$ grub2-mkconfig -o /boot/grub2/grub.cfg
 
 	Regenerate the initramfs.
 	$ dracut --regenerate-all --force
